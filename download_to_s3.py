@@ -30,43 +30,52 @@ def download_sensor_data(syn, synapse_id, col, limit=1000):
     else:
         raise TypeError("Parameter `limit` must be an integer")
     mapping = syn.downloadTableColumns(q, col)
-    return mapping
+    df = q.asDataFrame()
+    df['path'] = df[col].astype(str).map(mapping)
+    return df
 
 
-def store_to_s3(bucket_name, base_key, file_handle_mapping,
+def store_to_s3(bucket_name, base_key, file_handle_df,
                 profile_name="phil@sandbox"):
     session = boto.Session(profile_name=profile_name)
     s3 = session.resource("s3")
     bucket = s3.Bucket(bucket_name)
-    while len(file_handle_mapping):
-        handle, path = file_handle_mapping.popitem()
-        bucket.upload_file(path, os.path.join(base_key, os.path.basename(path)))
+    for i, r in file_handle_df.iterrows():
+        record_id, path = r["recordId"], r["path"]
+        metadata = {"record-id": record_id}
+        bucket.upload_file(
+                path,
+                os.path.join(base_key, os.path.basename(path)),
+                ExtraArgs={"Metadata":metadata})
 
 
 def main():
     args = read_args()
     syn = sc.login()
+    left_col = "left_motion.json"
+    right_col = "right_motion.json"
     left = download_sensor_data(
             syn = syn,
             synapse_id = TREMOR_TABLE,
-            col = "left_motion.json",
+            col = left_col,
             limit = args.limit)
     right = download_sensor_data(
             syn = syn,
             synapse_id = TREMOR_TABLE,
-            col = "right_motion.json",
+            col = right_col,
             limit = args.limit)
     store_to_s3(
             bucket_name = args.bucket_name,
-            base_key = args.base_key,
-            file_handle_mapping = left,
+            base_key = os.path.join(args.base_key, left_col),
+            file_handle_df = left,
             profile_name = args.aws_profile)
     store_to_s3(
             bucket_name = args.bucket_name,
-            base_key = args.base_key,
-            file_handle_mapping = right,
+            base_key = os.path.join(args.base_key, right_col),
+            file_handle_df = right,
             profile_name = args.aws_profile)
 
 
 if __name__ == "__main__":
     main()
+
